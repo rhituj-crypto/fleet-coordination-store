@@ -1,0 +1,23 @@
+version: '3.3'
+
+services:
+  fleet-db-primary:
+    image: mysql:8.0
+    container_name: fleet-primary
+    environment:
+      MYSQL_ROOT_PASSWORD: admin_password
+      MYSQL_DATABASE: fleet_db
+    command: --server-id=1 --log-bin=mysql-bin --binlog-format=ROW
+    ports:
+      - "3306:3306"
+
+  fleet-db-replica:
+    image: mysql:8.0
+    container_name: fleet-replica
+    environment:
+      MYSQL_ROOT_PASSWORD: admin_password
+    command: --server-id=2 --log-bin=mysql-bin --binlog-format=ROW --replicate-do-db=fleet_db
+    ports:
+      - "3307:3306"
+    depends_on:
+      - fleet-db-primary
