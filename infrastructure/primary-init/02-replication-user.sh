@@ -1,0 +1,12 @@
+#!/bin/bash
+set -euo pipefail
+
+REPLICATION_PASSWORD="${MYSQL_REPLICATION_PASSWORD:-replica_password}"
+SQL_REPLICATION_PASSWORD="${REPLICATION_PASSWORD//\'/\'\'}"
+
+mysql --protocol=socket -uroot -p"${MYSQL_ROOT_PASSWORD}" <<SQL
+CREATE USER IF NOT EXISTS 'fleet_replicator'@'%' IDENTIFIED BY '${SQL_REPLICATION_PASSWORD}';
+ALTER USER 'fleet_replicator'@'%' IDENTIFIED BY '${SQL_REPLICATION_PASSWORD}';
+GRANT REPLICATION SLAVE ON *.* TO 'fleet_replicator'@'%';
+FLUSH PRIVILEGES;
+SQL

@@ -1,5 +1,6 @@
 package com.fleetstore.controller;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fleetstore.service.FleetService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -15,14 +16,15 @@ public class FleetController {
     }
 
     @PostMapping("/{vehicleId}")
-    public ResponseEntity<Void> updateState(@PathVariable String vehicleId, @RequestBody String payload) {
+    public ResponseEntity<Void> updateState(
+            @PathVariable String vehicleId,
+            @RequestBody JsonNode payload) {
         fleetService.updateVehicleState(vehicleId, payload);
         return ResponseEntity.ok().build();
     }
 
     @GetMapping("/{vehicleId}")
     public ResponseEntity<String> getState(@PathVariable String vehicleId) {
-        String data = fleetService.getVehicleState(vehicleId);
-        return ResponseEntity.ok(data);
+        return ResponseEntity.ok(fleetService.getVehicleState(vehicleId));
     }
 }

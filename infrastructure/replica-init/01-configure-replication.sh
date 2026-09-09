@@ -1,0 +1,26 @@
+#!/bin/bash
+set -euo pipefail
+
+SOURCE_HOST="${SOURCE_HOST:-fleet-db-primary}"
+SOURCE_PORT="${SOURCE_PORT:-3306}"
+SOURCE_USER="${SOURCE_USER:-fleet_replicator}"
+SOURCE_PASSWORD="${SOURCE_PASSWORD:-replica_password}"
+SQL_SOURCE_PASSWORD="${SOURCE_PASSWORD//\'/\'\'}"
+
+mysql --protocol=socket -uroot -p"${MYSQL_ROOT_PASSWORD}" <<SQL
+SET GLOBAL super_read_only=OFF;
+SET GLOBAL read_only=OFF;
+SET SESSION sql_log_bin=0;
+CREATE DATABASE IF NOT EXISTS fleet_db;
+SET SESSION sql_log_bin=1;
+CHANGE REPLICATION SOURCE TO
+  SOURCE_HOST='${SOURCE_HOST}',
+  SOURCE_PORT=${SOURCE_PORT},
+  SOURCE_USER='${SOURCE_USER}',
+  SOURCE_PASSWORD='${SQL_SOURCE_PASSWORD}',
+  SOURCE_AUTO_POSITION=1,
+  GET_SOURCE_PUBLIC_KEY=1;
+START REPLICA;
+SET GLOBAL read_only=ON;
+SET GLOBAL super_read_only=ON;
+SQL
