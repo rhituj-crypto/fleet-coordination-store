@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euo pipefail
+set -eo pipefail
 
 REPLICATION_PASSWORD="${MYSQL_REPLICATION_PASSWORD:-replica_password}"
 SQL_REPLICATION_PASSWORD="${REPLICATION_PASSWORD//\'/\'\'}"
