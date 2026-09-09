@@ -1,0 +1,148 @@
+name: Phase 1 CI
+
+"on":
+  push:
+    branches:
+      - phase1-fixes
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  phase1-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Test and package backend
+        working-directory: backend-service
+        run: mvn -B clean package
+
+      - name: Package telemetry simulator
+        working-directory: telemetry-simulator
+        run: mvn -B clean package
+
+      - name: Start MySQL primary and replica
+        run: |
+          docker compose down -v --remove-orphans || true
+          docker compose up -d
+          docker compose ps
+
+      - name: Wait for MySQL containers
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for attempt in {1..60}; do
+            PRIMARY_HEALTH="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' fleet-primary 2>/dev/null || true)"
+            REPLICA_HEALTH="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' fleet-replica 2>/dev/null || true)"
+
+            echo "Attempt $attempt: primary=$PRIMARY_HEALTH replica=$REPLICA_HEALTH"
+
+            if [[ "$PRIMARY_HEALTH" == "healthy" && "$REPLICA_HEALTH" == "healthy" ]]; then
+              exit 0
+            fi
+
+            sleep 3
+          done
+
+          echo "MySQL containers did not become healthy in time."
+          docker compose ps
+          docker compose logs
+          exit 1
+
+      - name: Verify schema and replication threads
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TABLE_NAME="$(docker exec fleet-primary mysql -uroot -padmin_password -Nse \
+            "SELECT TABLE_NAME FROM information_schema.tables WHERE table_schema='fleet_db' AND table_name='fleet_state';" 2>/dev/null)"
+
+          [[ "$TABLE_NAME" == "fleet_state" ]]
+
+          for attempt in {1..60}; do
+            STATUS="$(docker exec fleet-replica mysql -uroot -padmin_password -e 'SHOW REPLICA STATUS\G' 2>/dev/null || true)"
+
+            if grep -q 'Replica_IO_Running: Yes' <<<"$STATUS" && \
+               grep -q 'Replica_SQL_Running: Yes' <<<"$STATUS"; then
+              echo "Replication is running."
+              exit 0
+            fi
+
+            echo "Waiting for replication threads... attempt $attempt"
+            sleep 2
+          done
+
+          echo "Replication did not start correctly."
+          docker exec fleet-replica mysql -uroot -padmin_password -e 'SHOW REPLICA STATUS\G' || true
+          exit 1
+
+      - name: Start backend service
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          nohup java -jar backend-service/target/backend-service-1.0.0.jar > backend.log 2>&1 &
+          echo $! > backend.pid
+
+          for attempt in {1..60}; do
+            if curl -sS -o /dev/null http://localhost:8080/api/telemetry/ci-startup-probe; then
+              echo "Backend is accepting HTTP requests."
+              exit 0
+            fi
+
+            if ! kill -0 "$(cat backend.pid)" 2>/dev/null; then
+              echo "Backend exited unexpectedly."
+              cat backend.log
+              exit 1
+            fi
+
+            echo "Waiting for backend... attempt $attempt"
+            sleep 2
+          done
+
+          echo "Backend did not start in time."
+          cat backend.log
+          exit 1
+
+      - name: Run Phase 1 end-to-end checks
+        shell: bash
+        run: |
+          chmod +x scripts/phase1-e2e-check.sh
+          ./scripts/phase1-e2e-check.sh
+
+      - name: Show diagnostics on failure
+        if: failure()
+        run: |
+          echo '===== Backend log ====='
+          cat backend.log 2>/dev/null || true
+
+          echo '===== Docker status ====='
+          docker compose ps || true
+
+          echo '===== Docker logs ====='
+          docker compose logs || true
+
+          echo '===== Replica status ====='
+          docker exec fleet-replica mysql -uroot -padmin_password -e 'SHOW REPLICA STATUS\G' 2>/dev/null || true
+
+      - name: Clean up
+        if: always()
+        run: |
+          if [[ -f backend.pid ]]; then
+            kill "$(cat backend.pid)" 2>/dev/null || true
+          fi
+
+          docker compose down -v --remove-orphans || true
